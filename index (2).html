@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TaskFlow — To-Do</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#"><span class="brand-mark">✓</span> taskflow</a>
+      <span class="api-status"><i></i> REST API connected</span>
+    </header>
+
+    <section class="hero">
+      <p class="eyebrow">YOUR PERSONAL WORKSPACE</p>
+      <h1>Make room for<br><span>what matters.</span></h1>
+      <p class="subtitle">A little progress each day adds up to big results.</p>
+    </section>
+
+    <section class="todo-panel">
+      <form id="todo-form" class="composer">
+        <input id="todo-input" type="text" maxlength="180" placeholder="What needs to get done?" autocomplete="off" required>
+        <button type="submit">Add task <span>＋</span></button>
+      </form>
+
+      <div class="list-heading">
+        <div>
+          <h2>Your tasks</h2>
+          <p id="task-count">Loading tasks…</p>
+        </div>
+        <div class="filters" role="group" aria-label="Filter tasks">
+          <button class="filter active" data-filter="all">All</button>
+          <button class="filter" data-filter="active">Active</button>
+          <button class="filter" data-filter="completed">Done</button>
+        </div>
+      </div>
+
+      <div id="todo-list" class="todo-list" aria-live="polite">
+        <div class="empty-state">Loading your tasks…</div>
+      </div>
+      <footer class="panel-footer">
+        <span>Small steps. Real momentum.</span>
+        <button id="clear-completed" class="text-button">Clear completed</button>
+      </footer>
+    </section>
+    <p class="credit">Built with Flask · REST API · SQLite</p>
+  </main>
+
+<script>
+const list = document.getElementById('todo-list');
+const form = document.getElementById('todo-form');
+const input = document.getElementById('todo-input');
+const count = document.getElementById('task-count');
+let todos = [];
+let activeFilter = 'all';
+
+async function api(url, options = {}) {
+  const response = await fetch(url, {
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    ...options
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Something went wrong.');
+  return data;
+}
+
+function render() {
+  const remaining = todos.filter(t => !t.completed).length;
+  count.textContent = `${remaining} task${remaining === 1 ? '' : 's'} left`;
+  const visible = todos.filter(t =>
+    activeFilter === 'all' ||
+    (activeFilter === 'active' && !t.completed) ||
+    (activeFilter === 'completed' && t.completed)
+  );
+
+  if (!visible.length) {
+    list.innerHTML = `<div class="empty-state"><span>✦</span><strong>${todos.length ? 'Nothing here right now' : 'Your list is clear'}</strong><p>${todos.length ? 'Try another filter.' : 'Add a task above and make today count.'}</p></div>`;
+    return;
+  }
+
+  list.innerHTML = visible.map(todo => `
+    <article class="todo-item ${todo.completed ? 'is-done' : ''}" data-id="${todo.id}">
+      <button class="check-button" data-action="toggle" aria-label="Mark task ${todo.completed ? 'active' : 'complete'}">${todo.completed ? '✓' : ''}</button>
+      <span class="todo-title">${escapeHtml(todo.title)}</span>
+      <button class="delete-button" data-action="delete" aria-label="Delete task">×</button>
+    </article>
+  `).join('');
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, char => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
+  })[char]);
+}
+
+async function loadTodos() {
+  try {
+    todos = await api('/api/todos');
+    render();
+  } catch (error) {
+    list.innerHTML = `<div class="empty-state error">${escapeHtml(error.message)}<p>Make sure the Flask server is running.</p></div>`;
+    count.textContent = 'API unavailable';
+  }
+}
+
+form.addEventListener('submit', async event => {
+  event.preventDefault();
+  const title = input.value.trim();
+  if (!title) return;
+  const button = form.querySelector('button');
+  button.disabled = true;
+  try {
+    await api('/api/todos', { method: 'POST', body: JSON.stringify({ title }) });
+    input.value = '';
+    await loadTodos();
+    input.focus();
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+list.addEventListener('click', async event => {
+  const button = event.target.closest('button[data-action]');
+  if (!button) return;
+  const item = button.closest('.todo-item');
+  const id = item.dataset.id;
+  const todo = todos.find(t => String(t.id) === id);
+  try {
+    if (button.dataset.action === 'toggle') {
+      await api(`/api/todos/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ completed: !todo.completed })
+      });
+    } else if (button.dataset.action === 'delete') {
+      await api(`/api/todos/${id}`, { method: 'DELETE' });
+    }
+    await loadTodos();
+  } catch (error) {
+    alert(error.message);
+  }
+});
+
+document.querySelectorAll('.filter').forEach(button => {
+  button.addEventListener('click', () => {
+    activeFilter = button.dataset.filter;
+    document.querySelectorAll('.filter').forEach(item => item.classList.toggle('active', item === button));
+    render();
+  });
+});
+
+document.getElementById('clear-completed').addEventListener('click', async () => {
+  const completed = todos.filter(todo => todo.completed);
+  try {
+    for (const todo of completed) {
+      await api(`/api/todos/${todo.id}`, { method: 'DELETE' });
+    }
+    await loadTodos();
+  } catch (error) {
+    alert(error.message);
+  }
+});
+
+loadTodos();
+</script>
+</body>
+</html>
